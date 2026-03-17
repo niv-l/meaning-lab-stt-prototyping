@@ -79,15 +79,15 @@
 
 <script>
 var DURATION = 8;
-var CIRC = 2 * Math.PI * 60; // circumference for r=60
+var CIRC = 2 * Math.PI * 60; 
 
-var progressEl = document.getElementById('progress');
-var timerLabel = document.getElementById('timerLabel');
-var statusEl   = document.getElementById('status');
+var progressEl  = document.getElementById('progress');
+var timerLabel  = document.getElementById('timerLabel');
+var statusEl    = document.getElementById('status');
 var responseBox = document.getElementById('responseBox');
-var doneMsg    = document.getElementById('doneMsg');
+var doneMsg     = document.getElementById('doneMsg');
 
-var recognition, interval, response = '', started = false;
+var recognition, interval, response = '', started = false, isLocked = false;
 
 progressEl.setAttribute('stroke-dasharray', CIRC);
 progressEl.setAttribute('stroke-dashoffset', '0');
@@ -105,11 +105,13 @@ function updateDisplay() {
 function endTrial() {
   clearInterval(interval);
   interval = null;
+  isLocked = true; // Safety lock
   try { recognition.stop(); } catch (e) {}
-  statusEl.textContent = 'Done';
+  
+  statusEl.textContent = 'Trial Complete';
   statusEl.classList.remove('listening');
   doneMsg.style.display = 'inline-block';
-  console.log('Final response:', response || '(empty)');
+  console.log('Final locked response:', response || '(empty)');
 }
 
 function startTrial() {
@@ -118,7 +120,7 @@ function startTrial() {
 
   var SR = window.SpeechRecognition || window.webkitSpeechRecognition;
   if (!SR) {
-    statusEl.textContent = 'Speech API not supported - use Chrome';
+    statusEl.textContent = 'Speech API not supported';
     return;
   }
 
@@ -128,26 +130,34 @@ function startTrial() {
   recognition.lang = 'en-US';
 
   recognition.onresult = function (e) {
+    // If the user said "done", we ignore all future incoming speech
+    if (isLocked) return;
+
     for (var i = e.resultIndex; i < e.results.length; i++) {
       if (!e.results[i].isFinal) continue;
-      var text = e.results[i][0].transcript.trim();
-      if (text.toLowerCase().replace(/[^a-z]/g, '') === 'delete') {
+      
+      var text = e.results[i][0].transcript.trim().toLowerCase();
+      var cleanText = text.replace(/[^a-z]/g, '');
+
+      if (cleanText === 'delete') {
         response = '';
+      } else if (cleanText === 'done') {
+        // Lock the response but DO NOT stop the timer
+        isLocked = true;
+        statusEl.textContent = 'Response Locked... Wait for timer';
+        statusEl.style.color = '#f39c12'; // Orange hint that it's waiting
       } else {
-        response = text;
+        response = e.results[i][0].transcript.trim();
       }
       updateDisplay();
     }
   };
 
-  recognition.onerror = function (e) {
-    if (e.error !== 'no-speech' && e.error !== 'aborted') {
-      console.warn('Recognition error:', e.error);
-    }
-  };
-
   recognition.onend = function () {
-    if (interval) { try { recognition.start(); } catch (e) {} }
+    // Only restart recognition if the timer is still running and we aren't locked
+    if (interval && !isLocked) { 
+      try { recognition.start(); } catch (e) {} 
+    }
   };
 
   recognition.start();
