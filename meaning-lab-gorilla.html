@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Speech-to-Text Trial Prototype</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    display: flex; justify-content: center; align-items: center;
+    min-height: 100vh; background: #f5f5f5; color: #222;
+  }
+  .trial-container {
+    text-align: center; max-width: 520px; width: 100%; padding: 2rem;
+  }
+  .instruction {
+    font-size: 1.15rem; margin-bottom: 2rem; line-height: 1.5; color: #333;
+  }
+  .timer-wrap {
+    position: relative; width: 140px; height: 140px; margin: 0 auto 1.5rem;
+  }
+  .timer-wrap svg {
+    transform: rotate(-90deg); width: 140px; height: 140px;
+  }
+  .track { fill: none; stroke: #e0e0e0; stroke-width: 6; }
+  .progress {
+    fill: none; stroke: #27ae60; stroke-width: 6;
+    stroke-linecap: round; transition: stroke-dashoffset 1s linear, stroke 0.3s;
+  }
+  .timer-num {
+    position: absolute; inset: 0; display: flex;
+    justify-content: center; align-items: center;
+    font-size: 2.2rem; font-weight: 300;
+  }
+  .status {
+    font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.1em;
+    margin-bottom: 1.5rem; color: #888; min-height: 1.2em;
+  }
+  .status.listening { color: #27ae60; }
+  .response-box {
+    background: #fff; border: 2px solid #e0e0e0; border-radius: 8px;
+    padding: 1.25rem; min-height: 60px; font-size: 1.1rem;
+    display: flex; align-items: center; justify-content: center;
+    color: #555; transition: border-color 0.3s;
+  }
+  .response-box.has-text { border-color: #27ae60; color: #222; }
+  .placeholder { color: #bbb; font-style: italic; }
+  .delete-hint { margin-top: 0.75rem; font-size: 0.78rem; color: #aaa; }
+  .done-msg {
+    margin-top: 1.5rem; padding: 0.75rem 1.5rem;
+    background: #27ae60; color: #fff; border-radius: 6px;
+    display: none; font-size: 0.95rem;
+  }
+</style>
+</head>
+<body>
+
+<div class="trial-container">
+  <p class="instruction">Please say aloud the label for the last vignette.</p>
+
+  <div class="timer-wrap">
+    <svg viewBox="0 0 140 140">
+      <circle class="track" cx="70" cy="70" r="60" />
+      <circle class="progress" cx="70" cy="70" r="60" id="progress" />
+    </svg>
+    <div class="timer-num" id="timerLabel">8</div>
+  </div>
+
+  <div class="status" id="status">Press space to begin</div>
+
+  <div class="response-box" id="responseBox">
+    <span class="placeholder">Your response will appear here</span>
+  </div>
+  <p class="delete-hint">Say <strong>&quot;delete&quot;</strong> to remove your last response</p>
+
+  <div class="done-msg" id="doneMsg">Response recorded &mdash; trial complete</div>
+</div>
+
+<script>
+var DURATION = 8;
+var CIRC = 2 * Math.PI * 60; // circumference for r=60
+
+var progressEl = document.getElementById('progress');
+var timerLabel = document.getElementById('timerLabel');
+var statusEl   = document.getElementById('status');
+var responseBox = document.getElementById('responseBox');
+var doneMsg    = document.getElementById('doneMsg');
+
+var recognition, interval, response = '', started = false;
+
+progressEl.setAttribute('stroke-dasharray', CIRC);
+progressEl.setAttribute('stroke-dashoffset', '0');
+
+function updateDisplay() {
+  if (response) {
+    responseBox.textContent = response;
+    responseBox.classList.add('has-text');
+  } else {
+    responseBox.innerHTML = '<span class="placeholder">Your response will appear here</span>';
+    responseBox.classList.remove('has-text');
+  }
+}
+
+function endTrial() {
+  clearInterval(interval);
+  interval = null;
+  try { recognition.stop(); } catch (e) {}
+  statusEl.textContent = 'Done';
+  statusEl.classList.remove('listening');
+  doneMsg.style.display = 'inline-block';
+  console.log('Final response:', response || '(empty)');
+}
+
+function startTrial() {
+  if (started) return;
+  started = true;
+
+  var SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SR) {
+    statusEl.textContent = 'Speech API not supported - use Chrome';
+    return;
+  }
+
+  recognition = new SR();
+  recognition.continuous = true;
+  recognition.interimResults = false;
+  recognition.lang = 'en-US';
+
+  recognition.onresult = function (e) {
+    for (var i = e.resultIndex; i < e.results.length; i++) {
+      if (!e.results[i].isFinal) continue;
+      var text = e.results[i][0].transcript.trim();
+      if (text.toLowerCase().replace(/[^a-z]/g, '') === 'delete') {
+        response = '';
+      } else {
+        response = text;
+      }
+      updateDisplay();
+    }
+  };
+
+  recognition.onerror = function (e) {
+    if (e.error !== 'no-speech' && e.error !== 'aborted') {
+      console.warn('Recognition error:', e.error);
+    }
+  };
+
+  recognition.onend = function () {
+    if (interval) { try { recognition.start(); } catch (e) {} }
+  };
+
+  recognition.start();
+
+  statusEl.textContent = 'Listening\u2026';
+  statusEl.classList.add('listening');
+
+  var timeLeft = DURATION;
+  timerLabel.textContent = timeLeft;
+
+  interval = setInterval(function () {
+    timeLeft--;
+    timerLabel.textContent = Math.max(timeLeft, 0);
+    var offset = CIRC * (1 - timeLeft / DURATION);
+    progressEl.setAttribute('stroke-dashoffset', offset);
+
+    if (timeLeft <= 3) {
+      progressEl.setAttribute('stroke', '#e74c3c');
+    }
+    if (timeLeft <= 0) {
+      endTrial();
+    }
+  }, 1000);
+}
+
+document.addEventListener('keydown', function (e) {
+  if (e.code === 'Space') { e.preventDefault(); startTrial(); }
+});
+</script>
+
+</body>
+</html>
